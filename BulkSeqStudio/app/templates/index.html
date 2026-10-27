@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BulkSeq Studio — bulk RNA-seq 差异分析</title>
+<link rel="stylesheet" href="/static/css/style.css?v={{ version }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+<!-- 本地内置 ECharts（离线可用）；若文件缺失则回退 CDN -->
+<script src="/static/vendor/echarts.min.js?v={{ version }}"></script>
+<script>
+  if (typeof echarts === "undefined") {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');
+  }
+</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🧬</span> BulkSeq Studio <small>v{{ version }}</small></div>
+  <div class="status" id="engine-status">检测引擎中…</div>
+</header>
+
+<main class="layout">
+  <!-- 侧边步骤导航 -->
+  <nav class="steps">
+    <div class="step active" data-step="1"><span class="num">1</span> 数据导入</div>
+    <div class="step" data-step="2"><span class="num">2</span> 差异分析</div>
+    <div class="step" data-step="3"><span class="num">3</span> 结果可视化</div>
+    <div class="step" data-step="4"><span class="num">4</span> 功能富集</div>
+    <div class="step" data-step="5"><span class="num">5</span> 报告导出</div>
+  </nav>
+
+  <section class="content">
+    <!-- Step 1 数据导入 -->
+    <div class="panel active" id="panel-1">
+      <h2>① 数据导入</h2>
+      <p class="hint">上传 <b>原始 counts 表达矩阵</b>（行=基因，列=样本）与 <b>设计表</b>（样本名 + 分组两列）。支持 csv / tsv / txt / xlsx，UTF-8 编码。</p>
+      <div class="card-grid">
+        <div class="card">
+          <h3>方式 A：上传文件</h3>
+          <label class="file-label">表达矩阵（必填）</label>
+          <input type="file" id="file-counts" accept=".csv,.tsv,.txt,.xlsx,.xls">
+          <label class="file-label">设计表（可选，未上传则按样本名自动分组）</label>
+          <input type="file" id="file-meta" accept=".csv,.tsv,.txt,.xlsx,.xls">
+          <div class="row">
+            <button class="btn primary" id="btn-upload">导入并校验</button>
+            <a class="link-btn" id="btn-template" href="/api/template/metadata" download>下载设计表模板</a>
+          </div>
+        </div>
+        <div class="card">
+          <h3>方式 B：内置示例数据</h3>
+          <p>模拟 airway 数据集（2000 基因 × 8 样本，dex 处理 vs 未处理），用于快速体验完整流程。</p>
+          <button class="btn" id="btn-example">加载示例数据</button>
+        </div>
+      </div>
+      <div id="data-summary" class="hidden"></div>
+      <div class="row">
+        <button class="btn primary hidden" id="btn-goto-de">下一步：设置分析参数 →</button>
+      </div>
+    </div>
+
+    <!-- Step 2 差异分析 -->
+    <div class="panel" id="panel-2">
+      <h2>② 差异分析</h2>
+      <div id="data-summary-mini" class="hidden"></div>
+      <div class="form-row">
+        <label>分析引擎
+          <select id="sel-method">
+            <option value="DESeq2">R / DESeq2（推荐）</option>
+            <option value="edgeR">R / edgeR (QLF)</option>
+            <option value="limma">R / limma-voom</option>
+            <option value="pydeseq2">Python / pydeseq2</option>
+          </select>
+        </label>
+        <label>参考组（对照）
+          <select id="sel-ref"></select>
+        </label>
+        <label>FDR 阈值 <input type="number" id="inp-alpha" value="0.05" step="0.01" min="0.001" max="0.5"></label>
+        <label>|log2FC| 阈值 <input type="number" id="inp-lfc" value="1" step="0.25" min="0" max="10"></label>
+      </div>
+      <button class="btn primary" id="btn-run-de">▶ 开始分析</button>
+      <div id="de-progress" class="progress hidden"><div class="spinner"></div><span id="de-progress-text">运行中…（DESeq2 一般需要 10~60 秒）</span></div>
+      <div id="de-result" class="hidden"></div>
+      <div id="de-table-wrap" class="hidden">
+        <h3>结果预览（按 padj 排序）</h3>
+        <div class="tbl-toolbar">
+          <input type="text" id="inp-gene-search" placeholder="搜索基因名…">
+          <button class="btn small" id="btn-gene-detail">查看选中基因</button>
+        </div>
+        <div class="table-scroll"><table id="de-table"></table></div>
+      </div>
+    </div>
+
+    <!-- Step 3 可视化 -->
+    <div class="panel" id="panel-3">
+      <h2>③ 结果可视化</h2>
+      <button class="btn primary" id="btn-plots">生成全部图表</button>
+      <div id="plot-progress" class="progress hidden"><div class="spinner"></div><span>绘图…</span></div>
+      <div id="plots-area" class="plots-grid"></div>
+      <div class="card" style="margin-top:18px;">
+        <h3>单基因表达查询</h3>
+        <p class="hint">输入基因名查看该基因在各组的表达箱线图与统计量。</p>
+        <div class="tbl-toolbar">
+          <input type="text" id="inp-gene2" placeholder="基因名，例如 PTGS2">
+          <button class="btn" id="btn-gene-detail2">查看表达</button>
+        </div>
+      </div>
+      <div id="gene-plot-area"></div>
+    </div>
+
+    <!-- Step 4 富集 -->
+    <div class="panel" id="panel-4">
+      <h2>④ GO / KEGG 功能富集</h2>
+      <div class="form-row">
+        <label>数据库
+          <select id="sel-library">
+            <option value="KEGG">KEGG 通路</option>
+            <option value="GO-BP">GO 生物过程</option>
+            <option value="GO-CC">GO 细胞组分</option>
+            <option value="GO-MF">GO 分子功能</option>
+            <option value="Reactome">Reactome</option>
+            <option value="MSigDB-Hallmark">MSigDB Hallmark</option>
+          </select>
+        </label>
+        <label>基因方向
+          <select id="sel-direction">
+            <option value="both">全部差异基因</option>
+            <option value="up">仅上调</option>
+            <option value="down">仅下调</option>
+          </select>
+        </label>
+        <label>模式
+          <select id="sel-enrich-mode">
+            <option value="enrichr">在线数据库</option>
+            <option value="gmt">本地 GMT 文件</option>
+          </select>
+        </label>
+        <label class="hidden" id="gmt-label">GMT 路径 <input type="text" id="inp-gmt" placeholder="D:\path\to\terms.gmt"></label>
+      </div>
+      <button class="btn primary" id="btn-enrich">运行富集分析</button>
+      <div id="enrich-progress" class="progress hidden"><div class="spinner"></div><span>查询中…</span></div>
+      <div id="enrich-result" class="hidden"></div>
+      <div class="table-scroll"><table id="enrich-table"></table></div>
+    </div>
+
+    <!-- Step 5 导出 -->
+    <div class="panel" id="panel-5">
+      <h2>⑤ 报告导出</h2>
+      <p class="hint">生成包含汇总、图表、显著基因表和富集结果的可交付报告。</p>
+      <div class="card-grid">
+        <div class="card">
+          <h3>Excel 工作簿</h3>
+          <p>汇总 / 显著基因 / 全部结果 / 归一化矩阵 / 富集表</p>
+          <button class="btn primary" id="btn-export-excel">导出 Excel</button>
+        </div>
+        <div class="card">
+          <h3>HTML 报告</h3>
+          <p>图文并茂的完整分析报告，可直接分享</p>
+          <label>项目名称 <input type="text" id="inp-project" value="我的 RNA-seq 分析"></label>
+          <button class="btn primary" id="btn-export-html">生成 HTML 报告</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<footer class="footer">BulkSeq Studio · 本地运行，数据不出本机 · 工作目录 D:\Program Files\testfield</footer>
+<script src="/static/js/app.js?v={{ version }}"></script>
+</body>
+</html>

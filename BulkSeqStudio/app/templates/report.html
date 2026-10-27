@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ project_name }} — Bulk RNA-seq 分析报告</title>
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; max-width: 1100px; margin: 0 auto; padding: 30px; color: #24292f; line-height: 1.6; }
+h1 { border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+h2 { border-left: 4px solid #2563eb; padding-left: 10px; margin-top: 34px; }
+h3 { color: #1e4fc0; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 12px 0; }
+th, td { border: 1px solid #e2e6ea; padding: 6px 10px; }
+th { background: #f6f8fa; }
+img { max-width: 100%; border: 1px solid #e2e6ea; border-radius: 8px; }
+.meta { color: #6a737d; font-size: 13px; }
+.badge { display:inline-block; background:#eaf1fe; color:#2563eb; border-radius: 20px; padding: 2px 12px; font-size: 12px; margin-right: 6px; }
+.up { color: #d62728; font-weight: 600; } .down { color: #1a9850; font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.stat-cards { display: flex; gap: 14px; flex-wrap: wrap; }
+.stat { border: 1px solid #e2e6ea; border-radius: 10px; padding: 10px 18px; text-align: center; }
+.stat .v { font-size: 24px; font-weight: 700; color: #2563eb; }
+.stat .k { font-size: 12px; color: #6a737d; }
+footer { margin-top: 50px; color: #6a737d; font-size: 12px; border-top: 1px solid #e2e6ea; padding-top: 12px; }
+</style>
+</head>
+<body>
+<h1>{{ project_name }}</h1>
+<p class="meta">
+  生成时间：{{ generated }} · 分析引擎：<b>{{ engine }}</b> ·
+  比较方向：<b>{{ comparison }}</b> ·
+  由 {{ app_name }} v{{ app_version }} 生成
+</p>
+
+<h2>一、数据概览</h2>
+<div class="stat-cards">
+  <div class="stat"><div class="v">{{ summary.n_genes }}</div><div class="k">基因数</div></div>
+  <div class="stat"><div class="v">{{ summary.n_samples }}</div><div class="k">样本数</div></div>
+  <div class="stat"><div class="v up">{{ n_up }}</div><div class="k">显著上调</div></div>
+  <div class="stat"><div class="v down">{{ n_down }}</div><div class="k">显著下调</div></div>
+</div>
+<p>显著性阈值：padj &lt; {{ alpha }}，|log2FC| ≥ {{ lfc_threshold }}。分组：{{ summary.groups | tojson }}</p>
+
+<h3>样本设计表</h3>
+<table>
+<tr><th>样本</th><th>分组</th></tr>
+{% for row in meta_table %}<tr><td>{{ row.get('sample') }}</td><td>{{ row.get('group') }}</td></tr>{% endfor %}
+</table>
+
+{% if size_factors %}
+<h3>文库归一化因子</h3>
+<table><tr>{% for s in size_factors %}<th>{{ s }}</th>{% endfor %}</tr><tr>
+{% for s, v in size_factors.items() %}<td>{{ '%.4f' % v }}</td>{% endfor %}</tr></table>
+{% endif %}
+
+<h2>二、样本质量与探索性分析</h2>
+{% if plots.dist %}<h3>表达分布</h3><img src="{{ plots.dist }}">{% endif %}
+{% if plots.pca %}<h3>PCA</h3><img src="{{ plots.pca }}">{% endif %}
+{% if plots.corr %}<h3>样本相关性</h3><img src="{{ plots.corr }}">{% endif %}
+
+<h2>三、差异分析结果</h2>
+{% if plots.volcano %}<h3>火山图</h3><img src="{{ plots.volcano }}">{% endif %}
+{% if plots.ma %}<h3>MA 图</h3><img src="{{ plots.ma }}">{% endif %}
+{% if plots.heatmap %}<h3>差异基因热图</h3><img src="{{ plots.heatmap }}">{% endif %}
+
+<h3>Top 显著差异基因（按 padj 排序，前 100）</h3>
+<table>
+<tr><th>基因</th><th>baseMean</th><th>log2FC</th><th>lfcSE</th><th>stat</th><th>p-value</th><th>padj</th></tr>
+{% for r in sig_table %}
+<tr><td>{{ r.gene }}</td>
+<td>{{ '%.1f' % r.baseMean if r.baseMean is not none }}</td>
+<td class="{{ 'up' if r.log2FoldChange and r.log2FoldChange > 0 else 'down' }}">{{ '%.3f' % r.log2FoldChange if r.log2FoldChange is not none }}</td>
+<td>{{ '%.3f' % r.lfcSE if r.lfcSE is not none }}</td>
+<td>{{ '%.2f' % r.stat if r.stat is not none }}</td>
+<td>{{ '%.2e' % r.pvalue if r.pvalue is not none }}</td>
+<td>{{ '%.2e' % r.padj if r.padj is not none }}</td></tr>
+{% endfor %}
+</table>
+
+{% if enrich_tables %}
+<h2>四、功能富集分析</h2>
+{% for name, rows in enrich_tables.items() %}
+<h3>{{ name }}（Top 30）</h3>
+<table>
+<tr><th>通路</th><th>Overlap</th><th>P-value</th><th>padj</th><th>基因</th></tr>
+{% for r in rows %}<tr><td>{{ r.Term }}</td><td>{{ r.Overlap }}</td>
+<td>{{ '%.2e' % r['P-value'] }}</td><td>{{ '%.2e' % r['Adjusted P-value'] }}</td><td>{{ r.Genes }}</td></tr>{% endfor %}
+</table>
+{% endfor %}
+{% endif %}
+
+<footer>
+  本报告由 {{ app_name }} v{{ app_version }} 本地生成，数据未离开本机。差异分析阈值：padj &lt; {{ alpha }} 且 |log2FC| ≥ {{ lfc_threshold }}；显著基因数：上调 {{ n_up }} / 下调 {{ n_down }}。
+</footer>
+</body>
+</html>
